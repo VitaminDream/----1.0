@@ -155,4 +155,4 @@ void printJson(Stream &out,
   out.println("}");
 }
 
-}  // namespace Telemetry
+}  // namespace TelemetryS
