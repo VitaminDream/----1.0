@@ -4,21 +4,27 @@
 #include <SPI.h>
 #include <SD.h>
 
+
 #include "config.h"
 #include "i2c_utils.h"
 #include "sensor_data.h"
 #include "sensors.h"
+#include "oled_display.h"
 
 
-// ============================================================
-// 浮标样机 V1.2
-// ESP32-S3 + MPU6050 + BME280 + WHEELTEC G60 + SD
-// ============================================================
+// =====================================================
+// 浮标样机 V1.3
+// ESP32-S3
+// MPU6050
+// BME280
+// GPS G60
+// SD CARD
+// OLED
+// =====================================================
 
 
-// ========================
-// GPS配置
-// ========================
+
+// ================= GPS =================
 
 constexpr int GPS_RX_PIN = 18;
 constexpr int GPS_TX_PIN = 17;
@@ -26,9 +32,7 @@ constexpr int GPS_TX_PIN = 17;
 constexpr uint32_t GPS_BAUD = 9600;
 
 
-// ========================
-// SD配置
-// ========================
+// ================= SD ==================
 
 constexpr int SD_CS_PIN = 10;
 constexpr int SD_MOSI_PIN = 11;
@@ -36,12 +40,10 @@ constexpr int SD_MISO_PIN = 13;
 constexpr int SD_SCK_PIN = 12;
 
 
-bool sdOK = false;
+bool sdOK=false;
 
 
-// ========================
-// 对象
-// ========================
+// ================= Objects =============
 
 BuoySensors sensors;
 
@@ -50,484 +52,437 @@ HardwareSerial G60Serial(1);
 TinyGPSPlus gps;
 
 
+// ================= Time ================
 
-uint32_t lastSampleMs = 0;
+uint32_t lastSampleMs=0;
 
 
 
-// ============================================================
+// =====================================================
 // SD初始化
-// ============================================================
+// =====================================================
 
 void initSD()
 {
 
-    Serial.println();
-    Serial.println("[SD] Initializing...");
+Serial.println("[SD] Initializing...");
 
 
-    SPI.begin(
-        SD_SCK_PIN,
-        SD_MISO_PIN,
-        SD_MOSI_PIN,
-        SD_CS_PIN
-    );
+SPI.begin(
+SD_SCK_PIN,
+SD_MISO_PIN,
+SD_MOSI_PIN,
+SD_CS_PIN
+);
 
 
-    if(!SD.begin(
-        SD_CS_PIN,
-        SPI,
-        4000000
-    ))
-    {
 
-        Serial.println("[SD] Card mount failed");
+if(!SD.begin(SD_CS_PIN))
+{
 
-        sdOK = false;
+Serial.println("[SD] Card mount failed");
 
-        return;
-    }
+sdOK=false;
+
+return;
+
+}
 
 
-    sdOK = true;
+sdOK=true;
 
 
-    Serial.println("[SD] Card OK");
+Serial.println("[SD] Card OK");
 
 
-    File file = SD.open(
-        "/buoy.csv",
-        FILE_APPEND
-    );
+
+File file=SD.open(
+"/buoy.csv",
+FILE_APPEND
+);
 
 
-    if(file)
-    {
 
-        if(file.size()==0)
-        {
+if(file)
+{
 
-            file.println(
-            "time,lat,lon,temp,pressure,humidity,roll,pitch"
-            );
+if(file.size()==0)
+{
 
-            Serial.println("[SD] CSV header created");
+file.println(
+"time,lat,lon,temp,pressure,humidity,roll,pitch"
+);
 
-        }
+}
 
+file.close();
 
-        Serial.print("[SD] File size: ");
-        Serial.print(file.size());
-        Serial.println(" bytes");
+}
 
-
-        file.close();
-
-    }
 
 }
 
 
 
-// ============================================================
-// GPS读取
-// ============================================================
+// =====================================================
+// GPS
+// =====================================================
 
 void serviceGps()
 {
 
-    while(G60Serial.available())
-    {
-
-        gps.encode(
-            G60Serial.read()
-        );
-
-    }
-
-}
-
-
-
-// ============================================================
-// IMU显示
-// ============================================================
-
-void printImu(
-    const ImuData &imu
-)
+while(G60Serial.available())
 {
 
-    Serial.printf(
-        "IMU | Roll=%.2f Pitch=%.2f\n",
-        imu.rollDeg,
-        imu.pitchDeg
-    );
+gps.encode(
+G60Serial.read()
+);
 
+}
 
-    Serial.printf(
-        "    | Acc %.2f %.2f %.2f m/s2\n",
-        imu.ax,
-        imu.ay,
-        imu.az
-    );
-
-
-    Serial.printf(
-        "    | Gyro %.2f %.2f %.2f rad/s\n",
-        imu.gx,
-        imu.gy,
-        imu.gz
-    );
 
 }
 
 
 
-// ============================================================
-// 环境显示
-// ============================================================
-
-void printEnvironment(
-    const EnvData &env
-)
-{
-
-    Serial.printf(
-    "ENV | Temp=%.2f C Pressure=%.2f hPa",
-    env.temperatureC,
-    env.pressureHpa
-    );
-
-
-    if(env.hasHumidity)
-    {
-
-        Serial.printf(
-        " Humidity=%.1f%%",
-        env.humidityPct
-        );
-
-    }
-
-
-    Serial.println();
-
-
-    Serial.printf(
-    "    | Altitude %.2f m\n",
-    env.altitudeM
-    );
-
-}
-
-
-
-// ============================================================
-// GPS显示
-// ============================================================
-
-void printGps()
-{
-
-    Serial.print("GPS | ");
-
-
-    if(
-    gps.location.isValid()
-    )
-    {
-
-        Serial.println("FIX");
-
-
-        Serial.printf(
-        "    | Lat %.6f Lon %.6f\n",
-        gps.location.lat(),
-        gps.location.lng()
-        );
-
-
-        Serial.printf(
-        "    | Satellites %d\n",
-        gps.satellites.value()
-        );
-
-    }
-
-    else if(
-    gps.charsProcessed()>10
-    )
-    {
-
-        Serial.println("SEARCHING");
-
-
-        Serial.printf(
-        "    | Characters=%lu\n",
-        gps.charsProcessed()
-        );
-
-
-        Serial.println(
-        "    | Waiting satellites..."
-        );
-
-    }
-
-    else
-    {
-
-        Serial.println("NO DATA");
-
-    }
-
-}
-
-
-
-// ============================================================
-// 保存SD
-// ============================================================
+// =====================================================
+// SD保存
+// =====================================================
 
 void saveData(
-const ImuData &imu,
-const EnvData &env
+ImuData &imu,
+EnvData &env
 )
 {
 
-    if(!sdOK)
-    {
 
-        Serial.println("[SD] Not ready");
-
-        return;
-
-    }
+if(!sdOK)
+return;
 
 
 
-    File file = SD.open(
-        "/buoy.csv",
-        FILE_APPEND
-    );
-
-
-    if(!file)
-    {
-
-        Serial.println("[SD] Open failed");
-
-        return;
-
-    }
+File file=SD.open(
+"/buoy.csv",
+FILE_APPEND
+);
 
 
 
-    file.print(millis());
-    file.print(",");
+if(!file)
+return;
 
 
 
-    if(gps.location.isValid())
-    {
-
-        file.print(
-        gps.location.lat(),
-        6
-        );
-
-        file.print(",");
-
-
-        file.print(
-        gps.location.lng(),
-        6
-        );
-
-    }
-    else
-    {
-
-        file.print("0,0");
-
-    }
-
-
-    file.print(",");
-
-    file.print(env.temperatureC);
-
-
-    file.print(",");
-
-    file.print(env.pressureHpa);
-
-
-    file.print(",");
-
-    file.print(env.humidityPct);
-
-
-    file.print(",");
-
-    file.print(imu.rollDeg);
-
-
-    file.print(",");
-
-
-    file.println(
-    imu.pitchDeg
-    );
-
-
-    file.close();
+file.print(millis());
+file.print(",");
 
 
 
-    Serial.println("[SD] Data saved OK");
+if(gps.location.isValid())
+{
+
+file.print(
+gps.location.lat(),
+6
+);
+
+file.print(",");
+
+
+file.print(
+gps.location.lng(),
+6
+);
+
+}
+
+else
+{
+
+file.print("0,0");
 
 }
 
 
 
-// ============================================================
-// setup
-// ============================================================
+file.print(",");
+
+file.print(env.temperatureC);
+
+file.print(",");
+
+file.print(env.pressureHpa);
+
+file.print(",");
+
+file.print(env.humidityPct);
+
+file.print(",");
+
+file.print(imu.rollDeg);
+
+file.print(",");
+
+file.println(imu.pitchDeg);
+
+
+
+file.close();
+
+
+}
+
+
+
+// =====================================================
+// 串口显示
+// =====================================================
+
+void printSerial(
+ImuData &imu,
+EnvData &env
+)
+{
+
+
+Serial.println();
+
+Serial.println(
+"============ BUOY DATA ============"
+);
+
+
+
+Serial.printf(
+"IMU Roll %.2f Pitch %.2f\n",
+imu.rollDeg,
+imu.pitchDeg
+);
+
+
+Serial.printf(
+"ACC %.2f %.2f %.2f\n",
+imu.ax,
+imu.ay,
+imu.az
+);
+
+
+Serial.printf(
+"ENV Temp %.2f C\n",
+env.temperatureC
+);
+
+
+Serial.printf(
+"Pressure %.2f hPa\n",
+env.pressureHpa
+);
+
+
+
+Serial.printf(
+"Humidity %.1f %%\n",
+env.humidityPct
+);
+
+
+
+if(gps.location.isValid())
+{
+
+Serial.println("GPS FIX");
+
+}
+
+else
+{
+
+Serial.println("GPS SEARCHING");
+
+}
+
+
+if(sdOK)
+Serial.println("SD OK");
+else
+Serial.println("SD ERROR");
+
+
+
+Serial.println(
+"================================="
+);
+
+
+}
+
+
+
+
+// =====================================================
+// SETUP
+// =====================================================
+
 
 void setup()
 {
 
-    Serial.begin(
-    BuoyConfig::SERIAL_BAUD
-    );
+
+Serial.begin(
+BuoyConfig::SERIAL_BAUD
+);
 
 
-    delay(1000);
-
-
-    Serial.println();
-    Serial.println("==============================");
-    Serial.println(" Buoy Prototype V1.2");
-    Serial.println(" MPU6050 + BME280 + G60 + SD");
-    Serial.println("==============================");
+delay(1000);
 
 
 
-    Wire.begin(
-    BuoyConfig::I2C_SDA_PIN,
-    BuoyConfig::I2C_SCL_PIN,
-    BuoyConfig::I2C_FREQUENCY_HZ
-    );
+Serial.println(
+"BUOY V1.3 START"
+);
 
 
 
-    I2CUtils::scanBus(
-    Wire,
-    Serial
-    );
+
+Wire.begin(
+BuoyConfig::I2C_SDA_PIN,
+BuoyConfig::I2C_SCL_PIN,
+BuoyConfig::I2C_FREQUENCY_HZ
+);
 
 
 
-    sensors.begin(
-    Wire,
-    Serial
-    );
+I2CUtils::scanBus(
+Wire,
+Serial
+);
 
 
 
-    initSD();
+sensors.begin(
+Wire,
+Serial
+);
 
 
 
-    G60Serial.begin(
-    GPS_BAUD,
-    SERIAL_8N1,
-    GPS_RX_PIN,
-    GPS_TX_PIN
-    );
+/*
+ OLED启动
+*/
+oledBegin();
 
 
-    Serial.println(
-    "[G60] UART started"
-    );
+
+/*
+ SD
+*/
+initSD();
+
+
+
+/*
+ GPS
+*/
+G60Serial.begin(
+GPS_BAUD,
+SERIAL_8N1,
+GPS_RX_PIN,
+GPS_TX_PIN
+);
+
+
+
+Serial.println(
+"[G60] UART started"
+);
+
+
 
 }
 
 
 
-// ============================================================
-// loop
-// ============================================================
+// =====================================================
+// LOOP
+// =====================================================
+
 
 void loop()
 {
 
-    serviceGps();
+
+serviceGps();
 
 
 
-    uint32_t now = millis();
+uint32_t now=millis();
 
 
 
-    if(
-    now-lastSampleMs >=
-    BuoyConfig::SAMPLE_INTERVAL_MS
-    )
-    {
-
-        lastSampleMs = now;
-
+if(
+now-lastSampleMs
+>=
+BuoyConfig::SAMPLE_INTERVAL_MS
+)
+{
 
 
-        ImuData imu;
-
-        EnvData env;
+lastSampleMs=now;
 
 
 
-        sensors.readImu(imu);
+ImuData imu;
 
-        sensors.readEnvironment(env);
-
-
-
-        Serial.println();
-
-        Serial.println(
-        "============= BUOY DATA ============="
-        );
+EnvData env;
 
 
 
-        printImu(imu);
+sensors.readImu(
+imu
+);
 
 
-        printEnvironment(env);
-
-
-        printGps();
-
-
-
-        saveData(
-        imu,
-        env
-        );
+sensors.readEnvironment(
+env
+);
 
 
 
-        Serial.println(
-        "====================================="
-        );
+
+// 串口
+printSerial(
+imu,
+env
+);
 
 
-    }
+
+// SD
+
+saveData(
+imu,
+env
+);
 
 
 
-    delay(2);
+// OLED
+
+oledUpdate(
+imu,
+env,
+gps,
+sdOK
+);
+
+
+
+}
+
+
+
+delay(10);
+
 
 }
