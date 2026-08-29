@@ -17,7 +17,8 @@ void oledUpdate(
     const ImuData &imu,
     const EnvData &env,
     TinyGPSPlus &gps,
-    bool sdOK
+    bool sdOK,
+    float waterTemp
 );
 
 
